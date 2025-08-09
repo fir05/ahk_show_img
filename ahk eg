@@ -1,0 +1,72 @@
+#Requires AutoHotkey v2.0
+#SingleInstance Force
+
+; 模拟解码后的 BGRA 数据（在实际中替换成 avif/libyuv 输出）
+width := 400
+height := 300
+pixel_data := Buffer(width * height * 4, 0)
+loop height {
+	y := A_Index - 1
+	loop width {
+		x := A_Index - 1
+		offset := (y * width + x) * 4
+		NumPut("UChar", x, pixel_data, offset + 0) ; B
+		NumPut("UChar", y, pixel_data, offset + 1) ; G
+		NumPut("UChar", 255, pixel_data, offset + 2) ; R
+		NumPut("UChar", 255, pixel_data, offset + 3) ; A
+	}
+}
+
+; 创建窗口
+hwnd := Gui("+AlwaysOnTop +ToolWindow", "BGRA 显示测试").Hwnd
+GuiFromHwnd(hwnd).OnEvent("Close", (*) => ExitApp())
+
+; 获取窗口 DC
+hdc := DllCall("GetDC", "Ptr", hwnd, "Ptr")
+
+; 创建内存 DC
+hdc_mem := DllCall("CreateCompatibleDC", "Ptr", hdc, "Ptr")
+
+; 创建位图
+hbitmap := CreateDIBSection(hdc, width, height, pixel_data)
+
+; 选择位图到内存 DC
+DllCall("SelectObject", "Ptr", hdc_mem, "Ptr", hbitmap)
+
+; 绘制到窗口
+DllCall("BitBlt"
+	, "Ptr", hdc
+	, "Int", 0, "Int", 0, "Int", width, "Int", height
+	, "Ptr", hdc_mem
+	, "Int", 0, "Int", 0
+	, "UInt", 0x00CC0020) ; SRCCOPY
+
+; 释放
+DllCall("ReleaseDC", "Ptr", hwnd, "Ptr", hdc)
+
+return
+
+CreateDIBSection(hdc, width, height, pixel_data) {
+	bi := Buffer(40, 0) ; BITMAPINFOHEADER
+	NumPut("UInt", 40, bi, 0) ; biSize
+	NumPut("Int", width, bi, 4) ; biWidth
+	NumPut("Int", -height, bi, 8) ; biHeight (负数表示 top-down)
+	NumPut("UShort", 1, bi, 12) ; biPlanes
+	NumPut("UShort", 32, bi, 14) ; biBitCount
+	NumPut("UInt", 0, bi, 16) ; biCompression = BI_RGB
+
+	VarSetCapacity(pBits, 0)
+	hbitmap := DllCall("CreateDIBSection"
+		, "Ptr", hdc
+		, "Ptr", bi
+		, "UInt", 0
+		, "PtrP", &ppvBits := 0
+		, "Ptr", 0
+		, "UInt", 0
+		, "Ptr")
+
+	; 拷贝像素数据到位图内存
+	DllCall("RtlMoveMemory", "Ptr", ppvBits, "Ptr", pixel_data, "UPtr", width * height * 4)
+
+	return hbitmap
+}
